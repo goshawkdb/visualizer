@@ -1,0 +1,92 @@
+<html>
+<head>
+	<title>GoshawkDB Explorer</title>
+	<link type="text/css" rel="stylesheet" href="styles.css">
+
+	<script type="text/javascript" src="goshawkdb.browser.js"></script>
+	<script type="text/javascript" src="vivagraph.min.js"></script>
+	<script type="text/javascript" src="dataGraph.js"></script>
+	<script type="text/javascript" src="graphics.js"></script>
+	<script type="text/javascript" src="example-configurations.js"></script>
+</head>
+<body>
+	<div id="container"></div>
+	<div id="info"></div>
+	<div id="connectioninfo"></div>
+	<script>
+
+	const params = window.location.search.substring(1).split('&').map((x) => x.split('=')).reduce((curr, [key, value  = true]) => {curr[key] = value; return curr}, {
+		host: "localhost",
+		port: 7895
+	})
+
+	let selectedNodeId = null
+	const graph = Viva.Graph.graph()
+
+	function displayInfo() {
+		const element = document.getElementById('info')
+		if (selectedNodeId == null) {
+			element.innerHTML = "Select a node for more information."
+		} else {
+			const data = graph.getNode(selectedNodeId).data
+			element.innerHTML = ""
+			element.appendChild(info(data))
+		}
+	}
+
+	function traceGraph(render) {
+		let connectioninfo = document.getElementById("connectioninfo")
+		let lastGraph = new DataGraph()
+		connectioninfo.innerHTML = `Connecting to ${params.host}:${params.port}...`
+		goshawkdb.connect(`wss://${params.host}:${params.port}/ws`).then((connection) => {
+			connectioninfo.innerHTML = `Connected to ${params.host}:${params.port}.`
+
+			connection.transact((txn) => {
+				const graph = new DataGraph()
+				for (let root in txn.roots) {
+					graph.getNode(txn.roots[root]).name = root
+					graph.visit(txn, txn.roots[root])
+				}
+
+				render(graph.diff(lastGraph))
+				lastGraph = graph
+
+				txn.retry()
+			})
+		}).catch((err) => {
+			connectioninfo.innerHTML = `Connection to ${params.host}:${params.port} failed. Try visiting <a href="https://${params.host}:${params.port}/">http://${params.host}:${params.port}/</a> to check your server is up and your certificates are working.`
+		})
+	}
+
+	traceGraph(({graph:{nodes, edges}, addedNodes, removedNodes, changedValues, addedEdges, removedEdges}) => {
+		for (let nodeKey of changedValues) {
+			graph.getNode(nodeKey).data = nodes.get(nodeKey)
+		}
+		for (let nodeKey of addedNodes) {
+			graph.addNode(nodeKey, nodes.get(nodeKey))
+		}
+		for (let nodeKey of removedNodes) {
+			graph.removeNode(nodeKey)
+		}
+		for (let [source, dests] of addedEdges) {
+			for (let [dest, data] of dests) {
+				graph.addLink(source, dest, data)
+			}
+		}
+		for (let [source, dests] of removedEdges) {
+			for (let [dest, data] of dests) {
+				graph.removeLink(source, dest)
+			}
+		}
+
+		displayInfo()
+	})
+
+	const renderer = Viva.Graph.View.renderer(graph, {
+		graphics : graphics,
+		container: document.getElementById('container')
+	})
+	renderer.run()
+</script>
+</body>
+</html>
